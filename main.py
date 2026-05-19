@@ -34,6 +34,8 @@ TARGET_SHEET = "Other_Gadgets"
 SOURCE_CHANNELS = [
     "dealsmagnet",
     "Loot_DealsX",
+    "techglaredeals",
+    "Online_Shopping_Prime",
     "amazinglootsdealsoffers",
 ]
 
