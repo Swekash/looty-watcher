@@ -229,12 +229,19 @@ async def handle_callback(update, context):
 # ── TELETHON WATCHER ──────────────────────────────────────────────────────────
 async def run_watcher(bot: Bot):
     session_str = base64.b64decode(SESSION_B64).decode()
-    client = TelegramClient(StringSession(session_str), API_ID, API_HASH)
-    await client.start()
-    logger.info("Telethon client started ✅")
+
+    async def start_client():
+        client = TelegramClient(StringSession(session_str), API_ID, API_HASH)
+        await client.start()
+        logger.info("Telethon client started ✅")
+        return client
+
+    client = await start_client()
+    last_event_time = [time.time()]
 
     @client.on(events.NewMessage(chats=SOURCE_CHANNELS))
     async def handler(event):
+        last_event_time[0] = time.time()
         try:
             msg = event.message
             text = msg.text or msg.caption or ""
@@ -276,8 +283,39 @@ async def run_watcher(bot: Bot):
         except Exception as e:
             logger.error(f"Handler error: {e}", exc_info=True)
 
-    await client.run_until_disconnected()
+    # Keepalive: ping every 5 min, reconnect if stale for 30 min
+    PING_INTERVAL = 300
+    STALE_THRESHOLD = 1800
+    last_ping_ok = [time.time()]
 
+    async def keepalive_loop():
+        nonlocal client
+        while True:
+            await asyncio.sleep(PING_INTERVAL)
+            try:
+                await client.get_me()
+                last_ping_ok[0] = time.time()
+                idle_mins = (time.time() - last_event_time[0]) / 60
+                logger.info(f"[keepalive] Telethon alive ✅ — last deal {idle_mins:.0f}m ago")
+            except Exception as e:
+                logger.warning(f"[keepalive] Ping failed: {e}")
+                stale_secs = time.time() - last_ping_ok[0]
+                if stale_secs > STALE_THRESHOLD:
+                    logger.error(f"[keepalive] Stale for {stale_secs/60:.0f}m — reconnecting...")
+                    try:
+                        await client.disconnect()
+                    except Exception:
+                        pass
+                    try:
+                        client = await start_client()
+                        last_ping_ok[0] = time.time()
+                        logger.info("[keepalive] Reconnected ✅")
+                    except Exception as re:
+                        logger.error(f"[keepalive] Reconnect failed: {re}")
+
+    asyncio.create_task(keepalive_loop())
+    logger.info("Keepalive loop started ✅")
+    await client.run_until_disconnected()
 
 # ── MAIN ──────────────────────────────────────────────────────────────────────
 async def main():
